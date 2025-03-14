@@ -2,14 +2,10 @@ import gymnasium as gym
 import numpy as np
 from tqdm import tqdm
 
-#env = gym.make('CliffWalking-v0')
-env = gym.make('Taxi-v3')
-#env = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=False)
 
-#env_test = gym.make('CliffWalking-v0', render_mode="human")
-env_test = gym.make('Taxi-v3', render_mode="human")
-#env_test = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=False, render_mode="human")
-
+env_str = "Taxi-v3"  # 'CliffWalking-v0', 'FrozenLake-v1'
+env = gym.make(env_str)
+env_test = gym.make(env_str, render_mode="human")
 
 observation_space = env.observation_space.n
 action_space = env.action_space.n
