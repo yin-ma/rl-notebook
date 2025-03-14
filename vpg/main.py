@@ -9,12 +9,10 @@ from utils import logprobabilities, sample_action
 
 # hyperparameters
 steps_per_epoch = 4000
-epochs = 20
+epochs = 200
 gamma = 0.99
-clip_ratio = 0.2
 policy_learning_rate = 3e-4
 value_function_learning_rate = 1e-3
-train_policy_iteration = 80
 train_value_iteration = 80
 lam = 0.97
 hidden_sizes = [64, 64]
@@ -22,9 +20,7 @@ hidden_sizes = [64, 64]
 
 def train_policy(actor, policy_optimizer, obs_buffer, act_buffer, logp_buffer, adv_buffer):
     logp = logprobabilities(actor(obs_buffer), act_buffer)
-    ratio = torch.exp(logp - logp_buffer)
-    clip_adv = torch.clamp(ratio, 1-clip_ratio, 1+clip_ratio) * adv_buffer
-    loss_pi = -(torch.min(ratio * adv_buffer, clip_adv)).mean()
+    loss_pi = -(logp * adv_buffer).mean()
 
     policy_optimizer.zero_grad()
     loss_pi.backward()
@@ -86,10 +82,7 @@ def train(env, buffer, actor, critic, policy_optimizer, value_optimizer):
             logp_buffer,
         ) = buffer.get()
 
-        for _ in range(train_policy_iteration):
-            kl = train_policy(actor, policy_optimizer, obs_buffer, act_buffer, logp_buffer, adv_buffer)
-            if kl > 1.5 * 0.01:
-                break
+        train_policy(actor, policy_optimizer, obs_buffer, act_buffer, logp_buffer, adv_buffer)
 
         for _ in range(train_value_iteration):
             train_value_function(critic, value_optimizer, obs_buffer, ret_buffer)
