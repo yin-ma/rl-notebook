@@ -1,8 +1,6 @@
 import gymnasium as gym
 from tqdm import tqdm
 import torch
-import numpy as np
-import time
 
 from buffer import Buffer
 from neural_network import Actor, Critic
