@@ -31,7 +31,7 @@ update_iteration = 10
 
 def update(env, buffer, actor, critic1, critic2, critic1_target, critic2_target, actor_optim, critic_optim):
     obs, act, rew, obs2, done = buffer.sample_batch(batch_size=batch_size, device=device)
-    act_limit = env.action_space.shape[0]
+    act_limit = env.action_space.high[0]
     critic_params = list(critic1.parameters()) + list(critic2.parameters())
     critic_params_target = list(critic1_target.parameters()) + list(critic2_target.parameters())
 
@@ -92,7 +92,7 @@ def update(env, buffer, actor, critic1, critic2, critic1_target, critic2_target,
 def learn(env):
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
-    act_limit = env.action_space.shape[0]
+    act_limit = env.action_space.high[0]
 
     # init buffer, actor, critic
     buffer = Buffer(obs_dim, act_dim, buffer_size)
