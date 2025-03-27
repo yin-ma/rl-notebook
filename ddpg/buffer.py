@@ -20,12 +20,12 @@ class Buffer:
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min((self.size + 1), self.max_size)
 
-    def sample_batch(self, batch_size=32):
+    def sample_batch(self, batch_size=32, device="cpu"):
         idxs = np.random.randint(0, self.size, size=batch_size)
         return (
-            torch.as_tensor(self.obs_buff[idxs]),
-            torch.as_tensor(self.act_buff[idxs]),
-            torch.as_tensor(self.rew_buff[idxs]),
-            torch.as_tensor(self.obs2_buff[idxs]),
-            torch.as_tensor(self.done_buff[idxs])
+            torch.as_tensor(self.obs_buff[idxs]).to(device),
+            torch.as_tensor(self.act_buff[idxs]).to(device),
+            torch.as_tensor(self.rew_buff[idxs]).to(device),
+            torch.as_tensor(self.obs2_buff[idxs]).to(device),
+            torch.as_tensor(self.done_buff[idxs]).to(device)
         )
