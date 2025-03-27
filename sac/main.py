@@ -3,7 +3,6 @@ from torch import nn
 import numpy as np
 import gymnasium as gym
 from copy import deepcopy
-import itertools
 
 from buffer import Buffer
 from network import Actor, Critic
@@ -12,41 +11,64 @@ from network import Actor, Critic
 # hyperparameters
 device = "cuda" if torch.cuda.is_available() else "cpu"
 buffer_size = int(1e6)
-hidden_sizes = [64, 64, 64]
-steps_per_epoch = 1000
-epochs = 1000
+hidden_sizes = [64, 64]
+steps_per_epoch = 200
+epochs = 40
 gamma = 0.99
-alpha = 0.20
 polyak = 0.995
-policy_lr = 3e-4
-q_lr = 3e-4
+pi_lr = 1e-3
+q_lr = 1e-3
 batch_size = 100
-max_ep_len = 1000
+max_ep_len = 200
+alpha_init = 0.2
+alpha_lr = 5e-3
 
-start_step = 3000
+start_step = 1000
 update_after = 1000
 update_every = 50
-update_iteration = 10
+update_iteration = 50
+
+# init
+env = gym.make("Pendulum-v1")
+obs_dim = env.observation_space.shape[0]
+act_dim = env.action_space.shape[0]
+act_limit = env.action_space.high[0]
+
+buffer = Buffer(obs_dim, act_dim, buffer_size)
+
+actor = Actor(obs_dim, act_dim, act_limit, hidden_sizes).to(device)
+critic1 = Critic(obs_dim, act_dim, hidden_sizes).to(device)
+critic2 = Critic(obs_dim, act_dim, hidden_sizes).to(device)
+critic1_target = deepcopy(critic1)
+critic2_target = deepcopy(critic2)
+
+critic_para = list(critic1.parameters()) + list(critic2.parameters())
+critic_target_para = list(critic1_target.parameters()) + list(critic2_target.parameters())
+
+for p in critic_target_para:
+    p.requires_grad = False
+
+actor_optim = torch.optim.Adam(actor.parameters(), lr=pi_lr)
+critic_optim = torch.optim.Adam(critic_para, lr=q_lr)
+
+log_alpha = nn.Parameter(torch.as_tensor(np.log(alpha_init)))
+alpha_optim = torch.optim.Adam([log_alpha], lr=alpha_lr)
+target_entropy = env.action_space.shape[0]
 
 
-def update(env, buffer, actor, critic1, critic2, critic1_target, critic2_target, actor_optim, critic_optim):
+def update():
     obs, act, rew, obs2, done = buffer.sample_batch(batch_size=batch_size, device=device)
-    act_limit = env.action_space.high[0]
-    critic_params = list(critic1.parameters()) + list(critic2.parameters())
-    critic_params_target = list(critic1_target.parameters()) + list(critic2_target.parameters())
 
-    # update critic
+    alpha = torch.exp(log_alpha).detach()
+
+    # update critic #
     with torch.no_grad():
-        dist = actor(obs2)
-        act2 = dist.rsample()
-        logp_pi = dist.log_prob(act2).sum(axis=-1)
-        logp_pi -= (2 * (np.log(2) - act2 - torch.nn.functional.softplus(-2 * act2))).sum(axis=1)
-        act2 = act_limit * torch.tanh(act2)
+        act2, logp2 = actor.sample(obs2)
 
         q1_target = critic1_target(obs2, act2)
         q2_target = critic2_target(obs2, act2)
         q_target = torch.min(q1_target, q2_target)
-        y = rew + gamma * (1 - done) * (q_target - alpha * logp_pi)
+        y = rew + gamma * (1 - done) * (q_target - alpha * logp2)
 
     q1 = critic1(obs, act)
     q2 = critic2(obs, act)
@@ -58,103 +80,82 @@ def update(env, buffer, actor, critic1, critic2, critic1_target, critic2_target,
     critic_optim.zero_grad()
     loss_q.backward()
     critic_optim.step()
+    # update critic #
 
-    # update actor
-    for p in critic_params:
+    # update actor #
+    for p in critic_para:
         p.requires_grad = False
 
-    dist = actor(obs)
-    act = dist.rsample()
-    logp_pi = dist.log_prob(act).sum(axis=-1)
-    logp_pi -= (2 * (np.log(2) - act - torch.nn.functional.softplus(-2 * act))).sum(axis=1)
-    act = act_limit * torch.tanh(act)
-
-    q1 = critic1(obs, act)
-    q2 = critic2(obs, act)
+    a, logp = actor(obs)
+    q1 = critic1(obs, a)
+    q2 = critic2(obs, a)
     q = torch.min(q1, q2)
-
-    loss_pi = (alpha * logp_pi - q).mean()
+    loss_pi = (alpha * logp - q).mean()
 
     actor_optim.zero_grad()
     loss_pi.backward()
     actor_optim.step()
 
-    for p in critic_params:
+    for p in critic_para:
         p.requires_grad = True
+    # update actor #
 
-    # update target network
+    # update alpha #
+    alpha_loss = (torch.exp(log_alpha) * (target_entropy - logp.detach())).mean()
+    alpha_optim.zero_grad()
+    alpha_loss.backward()
+    alpha_optim.step()
+    # update alpha #
+
+    # update target network #
     with torch.no_grad():
-        for p, p_targ in zip(critic_params, critic_params_target):
+        for p, p_targ in zip(critic_para, critic_target_para):
             p_targ.data.mul_(polyak)
             p_targ.data.add_((1 - polyak) * p.data)
+    # update target network #
 
 
-def learn(env):
-    obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.shape[0]
-    act_limit = env.action_space.high[0]
-
-    # init buffer, actor, critic
-    buffer = Buffer(obs_dim, act_dim, buffer_size)
-    actor = Actor(obs_dim, act_dim, hidden_sizes, act_limit).to(device)
-    critic1 = Critic(obs_dim, act_dim, hidden_sizes).to(device)
-    critic2 = Critic(obs_dim, act_dim, hidden_sizes).to(device)
-
-    critic1_target = deepcopy(critic1).to(device)
-    critic2_target = deepcopy(critic2).to(device)
-
-    for p1, p2 in zip(critic1_target.parameters(), critic2_target.parameters()):
-        p1.requires_grad = False
-        p2.requires_grad = False
-
-    critic_params = list(critic1.parameters()) + list(critic2.parameters())
-    critic_params_target = list(critic1_target.parameters()) + list(critic2_target.parameters())
-
-    actor_optim = torch.optim.Adam(actor.parameters(), lr=policy_lr)
-    critic_optim = torch.optim.Adam(critic_params, lr=q_lr)
-
+def learn():
     total_steps = steps_per_epoch * epochs
     obs, _ = env.reset()
-    ep_ret, ep_len = 0, 0
-    avg_ret = 0
+    ep_ret, ep_num = 0, 0
+    tra_ret, tra_len = 0, 0
 
     for t in range(total_steps):
+        obs_tensor = torch.as_tensor(obs).unsqueeze(0).to(device)
         if t > start_step:
             with torch.no_grad():
-                obs_tensor = torch.as_tensor(obs).to(device)
-                dist = actor(obs_tensor)
-                action = dist.rsample()
-                action = act_limit * torch.tanh(action)
-                a = action.cpu().numpy()
+                act, logp = actor.sample(obs_tensor)
+                a = act.squeeze(-1).cpu().numpy()
+
         else:
             a = env.action_space.sample()
 
-        obs2, rew, terminated, truncated, _ = env.step(a)
-        done = terminated or truncated
-        ep_ret += rew
-        ep_len += 1
-        done = False if ep_len == max_ep_len else done
+        obs2, rew, done, _, _ = env.step(a)
+        tra_ret += rew
+        tra_len += 1
 
+        done = False if (tra_len == max_ep_len) else done
         buffer.store(obs, a, rew, obs2, done)
         obs = obs2
 
-        if done or (ep_len == max_ep_len):
+        if done or (tra_len == max_ep_len):
             obs, _ = env.reset()
-            avg_ret += ep_ret
-            ep_ret, ep_len = 0, 0
+            ep_ret += tra_ret
+            ep_num += 1
+            tra_len, tra_ret = 0, 0
 
         if t >= update_after and t % update_every == 0:
             for _ in range(update_iteration):
-                update(env, buffer, actor, critic1, critic2, critic1_target, critic2_target, actor_optim, critic_optim)
+                update()
 
         if (t + 1) % steps_per_epoch == 0:
             epoch = (t + 1) // steps_per_epoch
-            print(f"----- ep{epoch} ----")
+            avg_ret = ep_ret / ep_num
+
+            print(f"----- ep{epoch} -----")
             print(f"avg_ret : {avg_ret:.4f}\n")
-            avg_ret = 0
+            ep_ret, ep_num = 0, 0
 
 
-if __name__ == "__main__":
-    env = gym.make("LunarLander-v3", continuous=True)
-    learn(env)
-
+learn()
