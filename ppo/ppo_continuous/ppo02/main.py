@@ -15,7 +15,7 @@ v_lr = 1e-3
 train_pi_iteration = 10
 train_v_iteration = 10
 lam = 0.97
-hidden_sizes = [64, 64, 64, 64]
+hidden_sizes = [64, 64]
 buffer_size = 400
 
 
